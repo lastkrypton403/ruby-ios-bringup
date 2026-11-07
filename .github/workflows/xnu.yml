@@ -1,11 +1,12 @@
-name: xnu-0085
+name: xnu-0195
 
-# Reproduces the kernel that first provided real Goodix touch (harness commit
-# 8716a06) without vendoring the upstream tree. ci/prepare-baseline.sh fetches
-# the pinned commit, removes the topaz patches, adds this project's patches,
-# applies the small 0010/0012 change, and verifies the canonical patchset hash.
-# ci/kernel_hash.py then gates the built kernel's executable/data segments
-# against the booted artifact's hash.
+# Builds the ruby kernel without vendoring the upstream tree.
+# ci/prepare-baseline.sh takes a content-pinned 82-file baseline (private
+# mirror; ALLOW_PUBLIC_UPSTREAM=1 is the external fallback), adds this
+# project's patches, applies the small 0010/0012 change, and verifies the
+# canonical patchset hash. ci/kernel_hash.py records the built kernel's
+# segments; it gates against a booted reference only when the branch's
+# config/*.env provides one.
 
 on:
   workflow_dispatch:
@@ -13,6 +14,21 @@ on:
       macos_version:
         description: macOS release whose xnu to build (13.5 = xnu-8796, iOS 16 era)
         default: "13.5"
+      runner:
+        description: hosted macOS image (macos-15 = arm64; macos-14 is retired)
+        default: "macos-15"
+      xcode_version:
+        description: Xcode to use; must exist in the image (16.0 = oldest on macos-15)
+        default: "16.0"
+      hash_config:
+        description: config carrying the expected kernel hash (empty expectation = record only)
+        default: "config/0195.env"
+      skip_patches:
+        description: patch numbers to drop (prefix match, e.g. 0144) for an older line
+        default: ""
+      patchset_sha256:
+        description: expected patchset hash; must match the patch set actually built
+        default: "a9cc0050432d4259f38c2e5431e0ac05eecf95c3a78324ad94f11283d8031983"
       kernel_config:
         description: RELEASE / DEVELOPMENT / DEBUG
         default: DEVELOPMENT
@@ -38,12 +54,19 @@ permissions:
   contents: read
 
 env:
-  BASE_REPO: https://github.com/MakrSas/ios-topaz.git
-  BASE_SHA: 5095ac19dbdcf37b64b81fe443f4027ad51b84bf
-  PATCHSET_SHA256: cf4008e309cfa566e3df968592a2d3f3224a9b3d0813d6054326115fecc0a03f
+  # Content pin of the 82-file sweet 0001-0079 baseline (see ci/README.md).
+  # The repo/ref/key live in Actions secrets: BASELINE_REPO, BASELINE_REF,
+  # BASELINE_SSH_KEY. The public pin is the manifest root, not a URL.
+  BASELINE_MANIFEST_SHA256: 829d759826607027bc4a1d9818b6dd4956a312a087217b6ce7e5ce31fa3ae910
+  BASELINE_FILES: "82"
+  PATCHSET_SHA256: ${{ inputs.patchset_sha256 || 'a9cc0050432d4259f38c2e5431e0ac05eecf95c3a78324ad94f11283d8031983' }}
+  SKIP_PATCHES: ${{ inputs.skip_patches || '' }}
   DXB_REPO: https://github.com/blacktop/darwin-xnu-build
   DXB_SHA: 663906528d1cd5ea8fde7de6f16de73db9511549
   MACOS_VERSION: ${{ inputs.macos_version || '13.5' }}
+  RUNNER_IMAGE: ${{ inputs.runner || 'macos-15' }}
+  XCODE_VERSION: ${{ inputs.xcode_version || '16.0' }}
+  HASH_CONFIG: ${{ inputs.hash_config || 'config/0195.env' }}
   KERNEL_CONFIG: ${{ inputs.kernel_config || 'DEVELOPMENT' }}
   MACHINE_CONFIG: ${{ inputs.machine_config || 'SWEET' }}
   # ccache: xnu is ~2000 compiles; a patch usually changes a few of them
@@ -56,14 +79,30 @@ env:
 
 jobs:
   build:
-    # macos-14 still ships Xcode 15.x: its iig matches the xnu-8796 IORPC ABI
-    # (Xcode 16's iig emits IORPC.kernelContent, which this xnu lacks)
-    runs-on: macos-14
-    timeout-minutes: 120
+    # The image and the Xcode are separate pins: GitHub ships one Xcode major
+    # version per macOS image, and macos-14 (the last image with Xcode 15.x) is
+    # retired on 2026-11-02. macos-15 carries Xcode 16.x and 26.x only, so the
+    # Xcode is selected explicitly and the build fails instead of drifting.
+    #
+    # xnu-8796 predates the IORPC "kernelContent" member that Xcode 16's iig
+    # emits; an iig/header mismatch is a source-level break, not a runner one.
+    runs-on: ${{ inputs.runner || 'macos-15' }}
+    timeout-minutes: 240
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
+      - name: Fetch private baseline
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: ${{ secrets.BASELINE_REPO }}
+          ref: ${{ secrets.BASELINE_REF }}
+          ssh-key: ${{ secrets.BASELINE_SSH_KEY }}
+          path: baseline-src
+          persist-credentials: false
+
       - name: Prepare pinned baseline
+        env:
+          BASELINE_DIR: baseline-src
         run: |
           sh ci/prepare-baseline.sh base
 
@@ -93,15 +132,20 @@ jobs:
           sudo chmod +x /usr/local/bin/xcodes
           sw_vers
           ls -d /Applications/Xcode*.app
-          XC="/Applications/Xcode_15.0.1.app"
-          if [ ! -d "$XC" ]; then
-            echo "Xcode 15.0.1 not found; refusing to drift to another Xcode"
+          XC=""
+          for cand in "/Applications/Xcode_${XCODE_VERSION}.app" "/Applications/Xcode_${XCODE_VERSION%%.*}.app"; do
+            if [ -d "$cand" ]; then XC="$cand"; break; fi
+          done
+          if [ -z "$XC" ]; then
+            echo "Xcode ${XCODE_VERSION} not found in ${RUNNER_IMAGE}; refusing to drift"
             exit 1
           fi
           echo "DEVELOPER_DIR=$XC/Contents/Developer" >> "$GITHUB_ENV"
           sudo xcode-select -s "$XC"
           xcodebuild -version
           xcrun --find iig
+          xcrun --sdk macosx --show-sdk-version
+          xcrun clang --version | head -1
           mkdir -p "$CCACHE_WRAP"
           for t in clang clang++; do
             printf '#!/bin/sh\nexec ccache %s "$@"\n' "$(xcrun -find $t)" > "$CCACHE_WRAP/$t"
@@ -113,15 +157,20 @@ jobs:
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ${{ github.workspace }}/.ccache
-          key: ccache-${{ env.MACHINE_CONFIG }}-${{ env.KERNEL_CONFIG }}-${{ hashFiles('ci/**', 'patches/**', 'config/0085.env', '.github/workflows/xnu.yml') }}
+          key: ccache-${{ env.XCODE_VERSION }}-${{ env.MACHINE_CONFIG }}-${{ env.KERNEL_CONFIG }}-${{ hashFiles('ci/**', 'patches/**', 'config/0195.env', '.github/workflows/xnu.yml') }}
           restore-keys: |
-            ccache-${{ env.MACHINE_CONFIG }}-${{ env.KERNEL_CONFIG }}-
+            ccache-${{ env.XCODE_VERSION }}-${{ env.MACHINE_CONFIG }}-${{ env.KERNEL_CONFIG }}-
 
       - name: Build
         working-directory: dxb
         env:
           # keep going after errors so one run reports every compile failure
           MAKEFLAGS: ${{ inputs.keep_going == 'false' && '' || '-k' }}
+          # bearssl.org intermittently returns 502; this mirror carries the
+          # same pinned commit and the SHA check in 0020-stage-bearssl.sh.
+          GIT_CONFIG_COUNT: "1"
+          GIT_CONFIG_KEY_0: url.https://github.com/status-im/BearSSL.insteadOf
+          GIT_CONFIG_VALUE_0: https://www.bearssl.org/git/BearSSL
         run: |
           ccache -z
           bash build.sh
@@ -186,9 +235,14 @@ jobs:
             echo "kernel missing; hash gate skipped"
             exit 0
           fi
-          . config/0085.env
-          python3 ci/kernel_hash.py --expect-exec-data "$KERNEL_EXPECT_EXEC_DATA" \
-            out/kernel.development.sweet | tee out/kernel-hashes.txt
+          . "$HASH_CONFIG"
+          if [ -n "${KERNEL_EXPECT_EXEC_DATA:-}" ]; then
+            python3 ci/kernel_hash.py --expect-exec-data "$KERNEL_EXPECT_EXEC_DATA" \
+              out/kernel.development.sweet | tee out/kernel-hashes.txt
+          else
+            echo "no booted reference yet; recording kernel hashes"
+            python3 ci/kernel_hash.py out/kernel.development.sweet | tee out/kernel-hashes.txt
+          fi
 
       - name: Provenance
         if: always()
@@ -200,12 +254,19 @@ jobs:
             patches=$(ls base/xnu/patches/*.patch 2>/dev/null | wc -l)
           fi
           {
-            echo "base_repo=$BASE_REPO"
-            echo "base_sha=$BASE_SHA"
+            echo "baseline_manifest=$BASELINE_MANIFEST_SHA256"
+            echo "baseline_files=$BASELINE_FILES"
+            echo "baseline_upstream=ios-topaz@5095ac19dbdcf37b64b81fe443f4027ad51b84bf"
+            echo "apple_xnu=xnu-8796.141.3"
             echo "patchset_sha256=$patchset"
             echo "dxb_repo=$DXB_REPO"
             echo "dxb_sha=$DXB_SHA"
             echo "macos_version=$MACOS_VERSION"
+            echo "runner_image=$RUNNER_IMAGE"
+            echo "xcode_version=$XCODE_VERSION"
+            echo "xcode_path=$(xcode-select -p)"
+            echo "sdk=$(xcrun --sdk macosx --show-sdk-version)"
+            echo "clang=$(xcrun clang --version | head -1)"
             echo "kernel_config=$KERNEL_CONFIG"
             echo "machine_config=$MACHINE_CONFIG"
             echo "patches=$patches"

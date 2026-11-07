@@ -3,7 +3,7 @@
 [English](../en/09-reproduce.md) · **中文**
 
 > 成功路径范围、bundle hash 和不保证项见
-> [`../../GUARANTEE.zh.md`](../../GUARANTEE.zh.md)。
+> [`../../GUARANTEE.zh.md`](../records/GUARANTEE.zh.md)。
 
 内核构建可复现；boot 镜像和 iOS root 不是完全自包含：Apple 用户态不可
 分发，0085/0084 镜像用了上游 shim/loader/ADT 构建器，而它不在仓库里。这一章
@@ -19,22 +19,41 @@
 
 ## 构建内核
 
-`.github/workflows/xnu.yml` 运行 `ci/prepare-baseline.sh`。recipe 拉固定基线、
-删除 topaz 补丁、加入本项目补丁、应用 0010/0012 小改动、统一换行；patchset
-哈希不匹配就停止。
+`.github/workflows/xnu.yml` 运行 `ci/prepare-baseline.sh`。recipe 取 82 文件
+基线（私有镜像；`ALLOW_PUBLIC_UPSTREAM=1` 是外部回退）、校验清单根、加入本
+项目补丁、应用 0010/0012 小改动、统一换行；patchset 哈希不匹配就停止。镜像/
+密钥边界见 [`11-ci-baseline.md`](11-ci-baseline.md)。公开回退可用
+`ALLOW_PUBLIC_UPSTREAM=1 sh ci/prepare-baseline.sh <dest>`。
 
 ```text
-base:     MakrSas/ios-topaz @ 5095ac19dbdcf37b64b81fe443f4027ad51b84bf
-recipe:   ci/prepare-baseline.sh（不 vendor 上游树）
-patchset: cf4008e309cfa566e3df968592a2d3f3224a9b3d0813d6054326115fecc0a03f
-exec-data: e4823afb97360e24708184d09c0dc6c9f7280e33d5c4aefbeb901b3fa9b11e3e
+apple:    apple-oss-distributions/xnu @ xnu-8796.141.3 (f625db25...)
+baseline: 82 文件（sweet 0001-0079），清单根 829d7598...
+recipe:   ci/prepare-baseline.sh（不复制上游树）
+patchset: 10b1e2e8...（当前线，175 文件）
+          历史：da13b6df...（151 文件，config/0155.env）、
+          9f7b41cf...（141 文件，config/0144.env）、
+          f47f4c19...（139 文件，config/0143.env）
+kernel:   full 2b008e52...，exec-data a4fb021e...
+          （CI 42114854911；gate rerun 42115985782）
+image:    x16-0179-touch-retry.img，d438ba47...（payload 72fc737c...）
 dxb:      blacktop/darwin-xnu-build @ 663906528d1cd5ea8fde7de6f16de73db9511549
-runner:   macos-14, Xcode 15.0.1, macOS 13.5 xnu
+runner:   macos-15, Xcode 16.0, macOS 13.5 xnu
 config:   DEVELOPMENT, MACHINE_CONFIG=SWEET, -mcpu=cortex-a55
 ```
 
-从 **Actions → xnu-0085 → Run workflow** 运行，或推送 `ci/`、`patches/`、
+main 构建 ramdisk/0140 集，以及当前 0156-0179 线（HAL/I2C、按键、USB
+热插拔、电池、RubyGIC/KPD、原生 EINT 触摸）。下面的 0155 及更早引用是
+历史记录。
+
+从 **Actions → xnu → Run workflow** 运行，或推送 `ci/`、`patches/`、
 `config/`、workflow 的改动。产物：`xnu-kernel`、`xnu-buildtree`。
+
+## 救援根（2026-10-29）
+
+ramdisk 线在 LK ramdisk 槽放一个 4 MB HFS+ root。内核用 `rubyrdsz=` 导入
+并挂成 `md0`；PID 1 进程内跑 `/etc/rc` 和 applet，不依赖 launchd 或
+fork/exec。救援镜像（`6795d9e4...`；B1 为 `49a10e49...`）和 root 是外部
+输入；完整 Unix/iOS 环境仍在 UFS iOS root。
 
 ## Host pipeline
 
@@ -123,9 +142,9 @@ fastboot reboot
 - 真实底边上滑解锁到桌面（0085）；两个 contact 会分发到 HID，edge 正常；
   用户态 pinch 未单独加日志验证。0084 合成上滑也可解锁。
 - 可能有黑壁纸、`Waiting...` widget、Messages badge。
-- 0085 内核真实触摸已通（底边上滑解锁、双指 contact 分发、edge）；按键、USB、Wi-Fi、GPU、RTC 未通。
+- 0085 内核真实触摸已通（底边上滑解锁、双指 contact 分发、edge）；按键、Wi-Fi、GPU、RTC 未通；0131b 有 USB probe，但未形成可用接口。
 - 启动前镜像 hash 固定；启动后的 live-root/ring/日志 hash 和时序易变（见
-  `GUARANTEE.zh.md` 的「hash 稳定性」）。
+  `docs/records/GUARANTEE.zh.md` 的「hash 稳定性」）。
 
 ## 验证
 

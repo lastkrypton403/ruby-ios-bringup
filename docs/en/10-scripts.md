@@ -23,16 +23,18 @@ because a simpler path silently failed.
 | `src/bringup/repack_stock.py` | repack a stock image with a payload | offline write | early bring-up |
 | `src/ufs-probe/build_ufs_full.py` | pack the UFS probe | offline write | UFS probe image |
 | `scripts/fetch-base.sh` | clone a pinned baseline for inspection | read-only/network | optional |
-| `scripts/verify-local.py` | host-only checks | read-only | passes locally |
+| `scripts/verify-local.py` | host-only checks: syntax, forbidden media, personal paths and secrets, CI pins, toolchain pins, EN/ZH document parity, commit-message neutrality, an optional denied-identifier list, markdown links, ICL round-trip | read-only | passes locally |
 | `scripts/check-bundle.py` | verify artifact hashes before flash | read-only | config-driven |
-| `.github/workflows/xnu.yml` | reproduce the 0084 kernel | CI build | recipe + patchset hash |
-| `ci/prepare-baseline.sh` | fetch, remove/add patches, verify hash | network + temp write | tested locally |
-| `ci/patchset_hash.py` | canonical patchset hash (0085: 88 files) | read-only | matches recipe |
+| `.github/workflows/xnu.yml` | build the current kernel | CI build | recipe + patchset hash |
+| `ci/prepare-baseline.sh` | fetch baseline, verify manifest, add patches, verify hash | network + temp write | tested locally |
+| `ci/patchset_hash.py` | canonical patchset hash (current line: 151 files; historical 141/139/137/135) | read-only | matches recipe |
 | `ci/baseline-changes.patch` | small 0010/0012 change | data | hash pinned |
 | `scripts/build-payload.sh` | payload from kernel+ADT+cmdline | network + offline write | tested |
 | `tools/image/pack_boot.py` | deterministic 128 MiB boot image | offline write | tested |
 | `tools/image/boot_layout.py` | compare rebuilt vs golden layout | read-only | tested |
 | `scripts/test-pipeline.sh` | payload → pack → layout (0084 milestone) | temp writes | passes for 0084; 0085 uses the commands in `09-reproduce` |
+| `tools/host/ruby_usb_host.py` | USB host session manager (`status`/`cmd`/`watch`); EP0 read-only, one EP2 OUT command line, optional one-shot `pnputil` restart | host-only; a wedged device can drop | 0143/0150/0151 runs; see [`12-usb-host`](12-usb-host.md) |
+| `config/0140.env`, `config/0131b.env`, `config/0142.env`, `config/0143.env`, `config/0144.env`, `config/0155.env`, `config/0179.env` | branch pins and boot cmdlines; 0086 files are historical | data | run/pin checked |
 | `config/0085.env`, `0085-boot.cmdline` | provenance (real touch) | data | run/pin checked |
 | `config/0084.env`, `0084-boot.cmdline` | previous milestone (synthetic swipe) | data | historical |
 
@@ -130,16 +132,19 @@ python src/ufs-probe/build_ufs_full.py --base <stock.img> \
 
 ## `ci/prepare-baseline.sh` + `.github/workflows/xnu.yml`
 
-**Why:** Upstream has no license file, so the tree is not vendored and no full
-delta is published. The recipe fetches the pinned commit, removes the topaz
-patches, adds this project's patches, applies the small 0010/0012 change,
-normalizes LF, and verifies the canonical 88-file patchset hash (0085) before building.
+**Why:** Upstream has no license file, so the tree is not copied into this
+repository and no full delta is published. The recipe takes the content-pinned
+82-file baseline (private mirror, or the `ALLOW_PUBLIC_UPSTREAM=1` fallback),
+verifies the manifest root, adds this project's patches, applies the small
+0010/0012 change, normalizes LF, and verifies the canonical patchset hash
+(main: 137 files; USB branch: 135) before building.
 
 - **Does not:** flash, pack an image, follow a moving branch tip, or publish
   the full upstream delta.
-- **Failure modes:** missing topaz patch → stop; 0010/0012 context mismatch →
-  `git apply` fails; patchset mismatch → stop before the build.
-- **Pins:** see `config/0085.env` and `ci/README.md`.
+- **Failure modes:** baseline manifest mismatch → stop; 0010/0012 context
+  mismatch → `git apply` fails; patchset mismatch → stop before the build.
+- **Pins:** `config/0140.env`, `config/0131b.env` and `ci/README.md`.
+- **Pins:** see `config/0140.env`, `config/0131b.env` and `ci/README.md`.
 
 ## `scripts/build-payload.sh`
 
@@ -219,6 +224,27 @@ python scripts/verify-local.py
 sh tools/twrp/twrp-guard.sh ./blkdiff ...
 ```
 
+## `tools/host/ruby_usb_host.py`
+
+**Why:** the kernel log/command channel needs a host reader that survives
+EP0 EPIPE and does not reset the pipe. It keeps paced reads, a one-shot
+health snapshot and an abort snapshot; EP0 is read-only.
+
+- **Inputs:** `1209:0002` over WinUSB/libusb; `status`, `cmd`, `watch`.
+- **Output:** session log; frame sequence summary; 0x27/0x23/0x2B and key
+  queue registers.
+- **Does not:** call clear_halt, write MMIO (0x2D), or retry in a tight
+  loop.
+- **Risk:** the optional `--pcycle` one-shot pnputil restart can drop a
+  wedged device; run one instance at a time.
+- **Example:**
+
+```sh
+python tools/host/ruby_usb_host.py status
+python tools/host/ruby_usb_host.py cmd "help" --drain-secs 3
+python tools/host/ruby_usb_host.py watch --pace-ms 5 --log session.log
+```
+
 ## Why not the alternatives
 
 | Chosen | Alternative | Why not |
@@ -226,6 +252,6 @@ sh tools/twrp/twrp-guard.sh ./blkdiff ...
 | ICL NOP | more kernel stubs | kernel delivery already `sent=1`; consumer was the wall |
 | kernel autoswipe | userland injector | no shell/log tools; signing/entitlements needed |
 | `blkdiff`/`blkpatch` | `adb pull` the 16 GiB image | long pulls stalled; moving 244 MiB of diffs is tractable |
-| pinned baseline + recipe | vendor the upstream tree | no upstream license; patchset hash keeps it honest |
+| pinned baseline + recipe | copy the upstream tree into the repository | no upstream license; patchset hash keeps it honest |
 | `boot_verify` | flash and see | a wrong 128 MiB layout fails silently in LK |
 | `boot_layout` for rebuilds | compare image SHA | the original filler was random; layout is the reproducible gate |

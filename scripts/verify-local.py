@@ -10,6 +10,9 @@ Checks:
   * optional: boot image layout dump (--boot-image)
   * forbidden binary/media extensions
   * personal-path and secret patterns
+  * toolchain pins (docs, workflow, branch config)
+  * English/Chinese document set parity
+  * commit-message neutrality and an optional private denylist
 
 Exit code is non-zero only for hard failures. External-tree checks are
 informational because the tree state depends on which upstream patches have
@@ -58,6 +61,28 @@ PROJECT_URLS = {
 hard_failures = []
 warnings = []
 
+# The toolchain the public docs must state.  The workflow inputs are the
+# source of truth; these are what the docs and the branch config have to
+# agree with, so a runner or Xcode change cannot leave the docs behind.
+TOOLCHAIN_RUNNER = "macos-15"
+TOOLCHAIN_XCODE = "16.0"
+PIN_CARRIERS = (
+    "README.md",
+    "README.zh.md",
+    "docs/records/STATUS.md",
+    ".github/SECURITY.md",
+    "ci/README.md",
+    "docs/en/09-reproduce.md",
+    "docs/zh/09-reproduce.md",
+    "docs/en/11-ci-baseline.md",
+    "docs/zh/11-ci-baseline.md",
+    "docs/en/reproducibility.md",
+    "docs/zh/reproducibility.md",
+)
+# Carriers that must also name the runner image.
+PIN_RUNNER_CARRIERS = tuple(
+    p for p in PIN_CARRIERS if p != ".github/SECURITY.md")
+
 
 def run(cmd, cwd=None):
     return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
@@ -79,6 +104,17 @@ def warn(msg):
 
 def sha256(data):
     return hashlib.sha256(data).hexdigest()
+
+
+def public_files():
+    """The public surface: tracked files plus untracked files that are not
+    ignored.  That is exactly what a commit could add, so a scan never
+    reads local-only material and never misses a new file."""
+    result = run(["git", "ls-files", "-z", "--cached", "--others",
+                  "--exclude-standard"])
+    if result.returncode != 0:
+        return None
+    return [os.path.join(ROOT, name) for name in result.stdout.split(chr(0)) if name]
 
 
 def walk_files():
@@ -156,6 +192,118 @@ def check_pii():
             fail("pii/secret: " + hit)
     else:
         ok("no personal paths or secret patterns")
+
+
+def check_toolchain_pins(config_path):
+    """The public docs, the workflow and the branch config must agree on the
+    toolchain.  A runner or Xcode change that misses a carrier fails here
+    instead of shipping a stale pin."""
+    missing = []
+    for rel in PIN_CARRIERS:
+        path = os.path.join(ROOT, rel)
+        if not os.path.exists(path):
+            missing.append(f"{rel}: missing")
+            continue
+        text = open(path, "r", encoding="utf-8", errors="ignore").read()
+        if TOOLCHAIN_XCODE not in text:
+            missing.append(f"{rel}: no Xcode {TOOLCHAIN_XCODE}")
+        if rel in PIN_RUNNER_CARRIERS and TOOLCHAIN_RUNNER not in text:
+            missing.append(f"{rel}: no {TOOLCHAIN_RUNNER}")
+    wf_path = os.path.join(ROOT, ".github", "workflows", "xnu.yml")
+    if os.path.exists(wf_path):
+        wf = open(wf_path, "r", encoding="utf-8", errors="ignore").read()
+        for value in (TOOLCHAIN_RUNNER, TOOLCHAIN_XCODE):
+            if value not in wf:
+                missing.append(f"workflow: no {value}")
+    if config_path:
+        env = read_env(config_path)
+        if env.get("CI_RUNNER") and env["CI_RUNNER"] != TOOLCHAIN_RUNNER:
+            missing.append(f"config: CI_RUNNER={env['CI_RUNNER']}")
+        if env.get("CI_XCODE") and env["CI_XCODE"] != TOOLCHAIN_XCODE:
+            missing.append(f"config: CI_XCODE={env['CI_XCODE']}")
+    if missing:
+        for item in missing:
+            fail("toolchain pin: " + item)
+    else:
+        ok(f"toolchain pins agree ({TOOLCHAIN_RUNNER} / Xcode {TOOLCHAIN_XCODE})")
+
+
+def check_doc_parity():
+    """The English and Chinese document sets must stay in step."""
+    en_dir = os.path.join(ROOT, "docs", "en")
+    zh_dir = os.path.join(ROOT, "docs", "zh")
+    if not (os.path.isdir(en_dir) and os.path.isdir(zh_dir)):
+        warn("docs/en or docs/zh missing; skipped the parity check")
+        return
+    en = sorted(os.listdir(en_dir))
+    zh = sorted(os.listdir(zh_dir))
+    diff = sorted(set(en) ^ set(zh))
+    if diff:
+        fail("docs en/zh file sets differ: " + ", ".join(diff))
+    else:
+        ok(f"docs en/zh file sets match ({len(en)} files)")
+
+
+def check_commit_messages():
+    """Public commit messages must not carry private paths or handles."""
+    log = run(["git", "log", "--format=%B", "-n", "50"])
+    if log.returncode != 0:
+        warn("git log unavailable; skipped the commit-message scan")
+        return
+    text = log.stdout
+    for url in PROJECT_URLS:
+        text = text.replace(url, "")
+    hits = []
+    for pattern, label in PII_PATTERNS:
+        for match in pattern.finditer(text):
+            hits.append(f"{label}: {match.group(0)}")
+    if hits:
+        for hit in hits:
+            fail("commit message pii: " + hit)
+    else:
+        ok("commit messages carry no personal paths or handles")
+
+
+def check_denylist(path):
+    """Scan the public tree, the staged diff and the commit messages for
+    strings that must never appear in the public repository.
+
+    The list itself is private - it holds device identifiers - so it is
+    passed in; the patterns are never printed back.
+    """
+    if not path or not os.path.exists(path):
+        warn("no denylist given; skipped the identifier scan")
+        return
+    needles = [line.strip() for line in
+               open(path, "r", encoding="utf-8", errors="ignore")
+               if line.strip() and not line.startswith("#")]
+    if not needles:
+        warn("denylist is empty; skipped the identifier scan")
+        return
+    hits = []
+    files = public_files()
+    if files is None:
+        warn("git ls-files unavailable; skipped the identifier scan")
+        return
+    for index, needle in enumerate(needles, 1):
+        for f in files:
+            ext = os.path.splitext(f)[1].lower()
+            if ext not in TEXT_EXT and os.path.basename(f) not in (".gitignore", ".gitattributes"):
+                continue
+            text = open(f, "r", encoding="utf-8", errors="ignore").read()
+            if needle in text:
+                hits.append(f"{os.path.relpath(f, ROOT)}: pattern #{index}")
+        diff = run(["git", "diff", "--cached"])
+        if diff.returncode == 0 and diff.stdout and needle in diff.stdout:
+            hits.append(f"staged diff: pattern #{index}")
+        log = run(["git", "log", "--format=%B", "-n", "50"])
+        if log.returncode == 0 and needle in log.stdout:
+            hits.append(f"commit messages: pattern #{index}")
+    if hits:
+        for hit in sorted(set(hits)):
+            fail("denylist: " + hit)
+    else:
+        ok(f"no denied identifiers in the public tree ({len(needles)} patterns)")
 
 
 def check_markdown_links():
@@ -282,8 +430,9 @@ def read_env(path):
     return values
 
 
-def check_ci_pins():
-    env_path = os.path.join(ROOT, "config", "0085.env")
+def check_ci_pins(config_path):
+    env_path = config_path if os.path.isabs(config_path) else os.path.join(ROOT, config_path)
+    rel_env = os.path.relpath(env_path, ROOT)
     wf_path = os.path.join(ROOT, ".github", "workflows", "xnu.yml")
     changes_path = os.path.join(ROOT, "ci", "baseline-changes.patch")
     recipe_path = os.path.join(ROOT, "ci", "prepare-baseline.sh")
@@ -292,7 +441,7 @@ def check_ci_pins():
 
     required = (env_path, wf_path, changes_path, recipe_path, remove_path)
     if not all(os.path.exists(p) for p in required):
-        fail("missing config/0085.env, workflow or recipe files")
+        fail(f"missing {rel_env}, workflow or recipe files")
         return
     if os.path.exists(delta_path):
         fail("ci/ruby-baseline.diff is present; option B requires the recipe only")
@@ -301,7 +450,7 @@ def check_ci_pins():
     pins = read_env(env_path)
     workflow = open(wf_path, "r", encoding="utf-8").read()
     missing = []
-    for key in ("BASE_REPO", "BASE_SHA", "PATCHSET_SHA256", "DXB_REPO",
+    for key in ("BASELINE_MANIFEST_SHA256", "PATCHSET_SHA256", "DXB_REPO",
                 "DXB_SHA", "MACOS_VERSION", "KERNEL_CONFIG", "MACHINE_CONFIG"):
         value = pins.get(key)
         if value and value not in workflow:
@@ -310,18 +459,23 @@ def check_ci_pins():
         fail("workflow does not contain pins: " + ", ".join(missing))
         return
 
-    for key in ("KERNEL_SHA256", "IMAGE_SHA256", "ROOT_SHA256",
-                "ICL_ORIG_SHA256", "ICL_PATCHED_SHA256", "BOOT_CMDLINE",
-                "SHIM_SHA256", "PAYLOAD_SHA256", "ADT_SHA256",
-                "BASE_BOOT_SHA256"):
-        if not pins.get(key):
-            fail(f"config/0085.env is missing {key}")
+    # Artifact pins are required only once a booted reference exists.
+    if pins.get("KERNEL_EXPECT_EXEC_DATA"):
+        for key in ("CI_KERNEL_SHA256", "CI_KERNEL_EXEC_DATA_SHA256",
+                    "CI_IMAGE_SHA256", "BOOT_CMDLINE"):
+            if not pins.get(key):
+                fail(f"{rel_env} is missing {key}")
+                return
+        if pins["CI_KERNEL_EXEC_DATA_SHA256"] != pins["KERNEL_EXPECT_EXEC_DATA"]:
+            fail("KERNEL_EXPECT_EXEC_DATA and CI_KERNEL_EXEC_DATA_SHA256 differ")
             return
 
-    cmdline_path = os.path.join(ROOT, pins["BOOT_CMDLINE"])
-    if not os.path.exists(cmdline_path):
-        fail(f"missing cmdline file: {pins['BOOT_CMDLINE']}")
-        return
+    cmdline_ref = pins.get("BOOT_CMDLINE")
+    if cmdline_ref:
+        cmdline_path = os.path.join(ROOT, cmdline_ref)
+        if not os.path.exists(cmdline_path):
+            fail(f"missing cmdline file: {cmdline_ref}")
+            return
 
     actual = sha256(open(changes_path, "rb").read())
     expected = pins.get("BASELINE_CHANGES_SHA256", "").lower()
@@ -329,7 +483,7 @@ def check_ci_pins():
         fail(f"baseline-changes sha256 {actual} != {expected}")
         return
     if not expected:
-        warn("BASELINE_CHANGES_SHA256 is not set in config/0085.env")
+        warn(f"BASELINE_CHANGES_SHA256 is not set in {rel_env}")
 
     if "prepare-baseline.sh" not in workflow:
         fail("workflow does not call ci/prepare-baseline.sh")
@@ -358,6 +512,11 @@ def main():
     ap.add_argument("--boot-image", help="boot image to inspect (read-only)")
     ap.add_argument("--icl-orig", help="original 4K ICL block (read-only)")
     ap.add_argument("--icl-patched", help="expected patched 4K block (read-only)")
+    ap.add_argument("--ci-config", default="config/0140.env",
+                    help="branch config with the CI pins (default: config/0140.env)")
+    ap.add_argument("--denylist", default=None,
+                    help="private list of strings that must not appear in the "
+                         "public tree (device identifiers and the like)")
     args = ap.parse_args()
 
     print(f"root: {ROOT}")
@@ -365,7 +524,11 @@ def main():
     check_shell()
     check_forbidden_files()
     check_pii()
-    check_ci_pins()
+    check_ci_pins(args.ci_config)
+    check_toolchain_pins(args.ci_config)
+    check_doc_parity()
+    check_commit_messages()
+    check_denylist(args.denylist)
     check_markdown_links()
     check_synthetic_icl()
     if args.icl_orig and args.icl_patched:

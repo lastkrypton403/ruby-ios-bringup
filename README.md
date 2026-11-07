@@ -2,24 +2,30 @@
 
 **English** · [中文](README.zh.md)
 
+[![xnu-0195](https://github.com/lky005/ruby-ios-bringup/actions/workflows/xnu.yml/badge.svg?branch=main)](https://github.com/lky005/ruby-ios-bringup/actions/workflows/xnu.yml)
+[![host-checks](https://github.com/lky005/ruby-ios-bringup/actions/workflows/host-checks.yml/badge.svg?branch=main)](https://github.com/lky005/ruby-ios-bringup/actions/workflows/host-checks.yml)
+[![tag v0.6.0](https://img.shields.io/badge/tag-v0.6.0-blue)](https://github.com/lky005/ruby-ios-bringup/tree/v0.6.0)
+
 **XNU 8796 + iPhone X iOS 16.7.16 userland on a MediaTek MT6877 phone.**
 A research bring-up, packaged as an independent, sanitized delta.
 
-> **Status 2026-10-22:** **real touch works.** The 0085 kernel drives the
-> Goodix GT9916R over bit-bang SPI3, unlocks the lock screen with a real
-> bottom-edge swipe, and dispatches two simultaneous contacts and edge events
-> to the HID layer (kernel IOLog; a user-visible pinch was not separately
-> instrumented). The 0084 image
-> and a CI-built kernel also reach the lock screen and the synthetic swipe to
-> the home screen. **Timings are measured from the Apple logo:** the B+NOP
-> first boot was observed at 22 s to lock screen and 30 s to autoswipe; the
-> historical first boot was ~58 s and the warm reboot ~22 s. Buttons, USB,
-> Wi-Fi, GPU and RTC are still not implemented.
->
-> **Device regression:** the B+NOP first boot -> A', the CI kernel boot, and
-> the real-touch 0085 boot were run on the author's unit on 2026-10-22. A
-> second unit/clean-room and the from-IPSW root/shim/ADT builders remain open.
-> See [`GUARANTEE.md`](GUARANTEE.md).
+> [!IMPORTANT]
+> **Status 2026-11-07 — 0195 line.** `main 1e45453`, `v0.6.0`; patchset
+> `a9cc0050…` (187 files), exec-data `6b22fc25…`; 0195 ack image
+> `fe009b89…` (comment-only; golden boot verified on 0194 `1808e440…`).
+> Works: UFS root, display, native EINT14 touch, keys, battery read-only,
+> USB EP2 state machine + golden SRCTRL=5, bilingual MTU3 acknowledgements.
+> Limits: XactErr `0xC0000011` not root-caused; 511 B framing prevents
+> big-read aggregation; sustained clear storms can drop the host port;
+> G7/G8 and ESD/P2.4 unchanged; no USB host/audio/Wi-Fi/BT/camera/GPU/RTC/
+> sleep; research bring-up.
+> See [STATUS](docs/records/STATUS.md) · [VERIFICATION](docs/records/VERIFICATION.md) · [docs](docs/README.md).
+
+## Start here
+
+| 5 min | 30 min | Deep |
+|---|---|---|
+| [README](README.md) + [STATUS](docs/records/STATUS.md) | [08-recovery](docs/en/08-recovery.md), [09-reproduce](docs/en/09-reproduce.md), [10-scripts](docs/en/10-scripts.md) | [01–07](docs/en/README.md), [11](docs/en/11-ci-baseline.md), [12](docs/en/12-usb-host.md), [13](docs/en/13-usb-ep2-golden.md) |
 
 ## Demo
 
@@ -31,22 +37,24 @@ kernel-side synthetic swipe → home screen. Captured on the 0084 build on
 [`media/README.md`](media/README.md).
 
 This repository contains **no Apple firmware, iOS root images, device dumps or
-diff data**. The kernel is built from a pinned upstream baseline plus this
-project's delta; the workflow verifies the applied tree before building.
+diff data**. The kernel is built from Apple's xnu tag, a content-pinned 82-file
+baseline and this project's delta; the workflow verifies the applied tree
+before building.
 
 ## At a glance
 
 | Area | State |
 |---|---|
-| Boot | stock LK → 128 MiB boot image → XNU 8796 → HFS+ root |
+| Boot | stock LK → 128 MiB boot image → XNU 8796 → HFS+ root (UFS, or `md0` rescue) |
 | CPU | 6× Cortex-A55, 16K pages, GICv3, timers |
 | Display | IOSurface/IOMFB → LK framebuffer, 1080×2400 |
 | Userland | launchd → lsd → backboardd → SpringBoard |
-| Input | **real Goodix GT9916R** over bit-bang SPI3; unlock, two-contact HID dispatch, edge; 0084 synthetic swipe still available |
-| Storage | UFS LUN 2, read/write HFS+ on `iosroot` |
-| Latest run | real-touch 0085 boot (harness and main-CI rebuild); 0084 B+NOP first boot -> A' (22 s / 30 s from the Apple logo); CI kernel boot |
-| Open | second unit/clean-room; from-IPSW root/shim/ADT builders; strict pinned payload |
-| Not yet | keys, USB, Wi-Fi, GPU, RTC |
+| Input | **real Goodix GT9916R** over SPI3; 0179 drives it from EINT14 through a child EINT controller and a dedicated IOWorkLoop oneshot (command/diagnostic path on `IOCommandGate`); unlock, multi-contact HID dispatch, edge; volume/power keys via HID; 0084 synthetic swipe still available |
+| Power | MT6360 battery/charger read-only: 4311 mV, `external=1/full=1`; Type-C read-only; no charger control/OTG |
+| Storage | UFS LUN 2, read/write HFS+ on `iosroot`; 4 MB HFS rescue root via the LK ramdisk slot |
+| Latest runs (separate) | 2026-11-06 0179 (P2b native EINT touch; G1–G6; 10 min + 5 min stress; no panic); 2026-11-02 0155 (P1/P2/P3: probe, keys, battery, touch; 19/19, 8/8 I2C5, no panic); 2026-10-30 USB 0143 (512 MPS/511 B; stability runs 13/7/23 frames, one drop); 2026-10-29 rescue root (8/8 rescue `/etc/rc` checks); 0085 real-touch boot; 0084 B+NOP first boot -> A' (22 s / 30 s from the Apple logo) |
+| Open | P2b G7/G8 and a full 10 min repeat were not run; no ESD health timer; P2.4 battery UI latency (30 s poll; 100→98 on unplug); P3 target (USB host, audio, sensors); second unit/clean-room; from-IPSW root/shim/ADT builders; strict pinned payload; USB EP2 host-side XACT |
+| Not yet | Wi-Fi, Bluetooth, cellular, audio, camera, GPU, RTC; USB host/OTG; sleep/wake; charger control; Type-C role |
 | Safety | AMFI/sandbox/code signing off; data may be lost |
 
 ## Why this milestone matters
@@ -61,14 +69,14 @@ evidence and the wrong turns.
 
 | Path | Contents |
 |---|---|
-| `README.md`, `STATUS.md`, `SCOPE.md`, `SAFETY.md` | entry points and boundaries |
-| `ACKNOWLEDGEMENTS.md`, `LEGAL.md` | credits and legal risk notice |
+| `README.md` | entry point |
+| `docs/records/` | status, verification, guarantee, scope, safety, legal, acknowledgements |
 | `docs/en/`, `docs/zh/` | English and Chinese chapters |
 | `touch/` | probe ladder, hardware contract and sanitized lab notes |
-| `patches/` | own XNU delta: 0080 UFS, 0085 Goodix touch; historical 0081-0084 |
-| `ci/` | baseline recipe, canonical patchset hash, kernel segment hash and provenance |
-| `config/` | 0085 real-touch pins and boot cmdline; 0084 as the previous milestone |
-| `.github/workflows/xnu.yml` | reproduces the bootable 0085 kernel and gates its exec-data hash |
+| `patches/` | own XNU delta: 0080 UFS, 0085 Goodix touch, 0086-0179 USB/probe/keys/battery/touch/native IRQ, 0140/0141 ramdisk; historical 0081-0084 |
+| `ci/` | baseline manifest/recipe, canonical patchset hash, kernel segment hash and provenance |
+| `config/` | 0179 current line (0156-0179); 0155 and earlier as history |
+| `.github/workflows/xnu.yml` | reproduces the current kernel and gates its patchset/exec-data hash; workflow name `xnu-0179` |
 | `src/bringup/` | early boot payloads, shim, image packers |
 | `src/ufs-probe/` | read-only MT6877 UFS probe |
 | `tools/image/` | ICL patch, dyld scanner, boot verifier |
@@ -111,23 +119,37 @@ python tools/sweetlog/decode.py <area.bin> <out.txt>
 The kernel workflow uses:
 
 ```text
-base:     MakrSas/ios-topaz @ 5095ac19dbdcf37b64b81fe443f4027ad51b84bf
-recipe:   ci/prepare-baseline.sh (the upstream tree is not vendored)
-patchset: de1824c28b5e56f7c60988c33501cd5bbfd24a4159d9358223fd2af11392d360
-runner:   macos-14 / Xcode 15.0.1 / macOS 13.5 xnu
+apple:    apple-oss-distributions/xnu @ xnu-8796.141.3 (f625db25...)
+baseline: 82 files (sweet 0001-0079), manifest root 829d7598...
+recipe:   ci/prepare-baseline.sh (private mirror; public fallback ALLOW_PUBLIC_UPSTREAM=1)
+patchset: 10b1e2e8... (current line, 175 files; historical da13b6df... 151, 9f7b41cf... 141, f47f4c19... 139, 27894e7b... 137, 29449e32... 135)
+runner:   macos-15 / Xcode 16.0 / macOS 13.5 xnu
 config:   DEVELOPMENT, MACHINE_CONFIG=SWEET, -mcpu=cortex-a55
 ```
 
-The recipe removes the topaz patches, adds this project's patches, applies the
-small 0010/0012 change, normalizes line endings and refuses to build unless the
-canonical patchset hash matches. The boot image itself is **not** included;
+The recipe verifies the 82-file baseline, adds this project's patches, applies
+the small 0010/0012 change, normalizes line endings and refuses to build unless
+the canonical patchset hash matches. See `docs/en/11-ci-baseline.md`. The boot image itself is **not** included;
 `tools/image/` provides the offline verifier and patch tools.
 
 Host pipeline (no device, no root): `scripts/test-pipeline.sh` with a base boot
-image, kernel, ADT, shim and the golden 0084 image (the 0084 milestone harness;
-the 0085 path uses the three commands in `docs/en/09-reproduce.md` with
-`config/0085.env`). It builds the payload, packs a deterministic image and
-checks the layout.
+image, kernel, ADT, shim and the golden 0084 image (the 0084/0085 historical
+harness; the current 0179 path uses the three commands in
+`docs/en/09-reproduce.md` with `config/0179.env`). It builds the payload, packs
+a deterministic image and checks the layout.
+
+## Current line & verification
+
+| Pin | Value |
+|---|---|
+| Patchset | `a9cc0050…` (187 files) |
+| Kernel | full `45ea1bc3…`, exec-data `6b22fc25…` (0195 ack; 0194 exec same) |
+| Image | `fe009b89…` (`x16-0195-ack.img`, payload `3a97d52b…`, comment-only; 0194 golden `1808e440…` booted) |
+| CI | `xnu-0195` `42301546006` / `42302694315` (exec pin); host-checks `42302515812`; main `42304310915` / host-checks `42304311052` |
+| Tags | `v0.6.0` → `1e45453`; `usb-ep2-0194-2026-11-07` → `a9e24e2`; historical `v0.5.0` → `22cdb29` |
+| `boot_a` | 0194 (active `_b`); 0195 ack image built, not flashed |
+| Device evidence | 0194 golden boot (`golden acr5=0x40805000`, 14.1 s); 62-frame peak; EP2 state machine; XactErr `0xC0000011` |
+| Evidence | [STATUS](docs/records/STATUS.md) · [VERIFICATION](docs/records/VERIFICATION.md) · [GUARANTEE](docs/records/GUARANTEE.md) · [13](docs/en/13-usb-ep2-golden.md) |
 
 ## Device situation
 
@@ -136,10 +158,10 @@ checks the layout.
 | Device | Redmi Note 12 Pro 5G, `ruby` / MT6877, 8 GB + 256 GB |
 | System | Android 12 / MIUI 13.0.4, unlocked, Magisk, slot `_a` |
 | Layout | `userdata` 208.4 GiB + `iosroot` 17 GiB; `boot_a` 128 MiB; `super` ~9.1 GB |
-| Current state | artifacts: real-touch 0085 image/kernel, 0084 image, root A/A' snapshots, ICL blocks, boot cmdline; the device is not part of this repository |
-| Success artifacts | 0085 image, kernel, root A/A' snapshots, ICL blocks, boot cmdline |
+| Current state | 0194 image/kernel (active slot `_b`); 0195 ack image built, not flashed; 0189C/TWRP archived; 0155 and 0085/0084 history; root A/A' snapshots, ICL blocks, boot cmdline; the device is not part of this repository |
+| Success artifacts | 0179 image, kernel, root A/A' snapshots, ICL blocks, boot cmdline |
 | Must match | firmware/GPT, root hash, boot image, boot args, panel/display |
-| Not needed | touch firmware, Wi-Fi, USB, GPU, RTC |
+| Not needed | touch firmware, Wi-Fi/BT, audio, camera/GPU, RTC |
 
 Root states (external; pinned in `config/0085.env`):
 
@@ -160,29 +182,89 @@ they can fingerprint the unit. Artifact hashes are in `config/0085.env`. See
   data loss.**
 - The dual-boot layout is an appendix **method note**, not an installer.
 - No Apple firmware, no activation against Apple servers, no personal data.
-- Read [`SAFETY.md`](SAFETY.md) and [`SCOPE.md`](SCOPE.md) before flashing.
+- Read [`SAFETY.md`](docs/records/SAFETY.md) and [`SCOPE.md`](docs/records/SCOPE.md) before flashing.
 - Content policy: do not post or request Apple firmware, iOS root, dyld
   caches, device dumps, serials/IMEI/MAC or personal data. See the issue
-  template (`.github/ISSUE_TEMPLATE/`) and [`CONTRIBUTING.md`](CONTRIBUTING.md).
+  template (`.github/ISSUE_TEMPLATE/`) and [`CONTRIBUTING.md`](.github/CONTRIBUTING.md).
 
 ## Guarantee
 
-The success path — boot to the lock screen and the synthetic swipe to the home
-screen — now has **one-unit device evidence** (B+NOP first boot -> A', and the
-CI kernel boot) plus the documented recipe. It is not a second-unit or
-clean-room guarantee. Pre-boot artifact hashes are fixed for the named files;
-post-boot live-root/ring/log hashes are volatile. The from-IPSW root/shim/ADT
-builders and the strict pinned payload rebuild are still open. See
-[`GUARANTEE.md`](GUARANTEE.md).
+The success path — boot to the lock screen, native EINT14 touch, keys and
+battery read-back (0179) — has **one-unit device evidence** (B+NOP first boot
+-> A', the CI kernel boot, the 0155 run and the 0179 P2b line) plus the
+documented recipe. It is not a second-unit or clean-room guarantee; G7/G8 and
+a full 10 min repeat were not run. Pre-boot artifact hashes are fixed for the
+named files; post-boot live-root/ring/log hashes are volatile. The from-IPSW
+root/shim/ADT builders and the strict pinned payload rebuild are still open.
+See [`GUARANTEE.md`](docs/records/GUARANTEE.md).
 
 ## Docs
 
-Start at [`docs/README.md`](docs/README.md), or go directly to the
-[English chapters](docs/en/README.md) / [中文章节](docs/zh/README.md).
+Start at the [docs index](docs/README.md) ([English](docs/en/README.md) / [中文](docs/zh/README.md)).
+
+| Start | Reference | Evidence |
+|---|---|---|
+| [09-reproduce](docs/en/09-reproduce.md), [08-recovery](docs/en/08-recovery.md) | [11-ci-baseline](docs/en/11-ci-baseline.md), [12-usb-host](docs/en/12-usb-host.md) | [STATUS](docs/records/STATUS.md), [VERIFICATION](docs/records/VERIFICATION.md), [GUARANTEE](docs/records/GUARANTEE.md) |
+
+## History
+
+See [STATUS](docs/records/STATUS.md) and [07-experiments](docs/en/07-experiments.md).
+
+<details>
+<summary>Project history (2026-10-22 → 2026-11-01)</summary>
+
+> **Status 2026-11-01:** the build moved to a hosted `macos-15` image with
+> Xcode 16.0; the kernel source is unchanged and the interface-compiler step
+> still generates cleanly. The line adds a read-only board probe (pwrap,
+> bounded I2C scan, GPIO/clock/KPD/WDT status, segmented snapshots) behind the
+> USB console, plus an enumeration-window fix that gives the host enough time
+> to finish configuration - the host now configures the device on the first
+> try. CI `41229568807` matched patchset `9f7b41cf...` (141 files) and
+> exec-data `62a17d48...`. The probe returned board data on one device run
+> (watchdog not armed, four I2C5 acknowledgements, the MT6360 readable over
+> I2C5) and a ten-minute read-only idle check found no panic; the two pwrap
+> reads stay empty until the pwrap initialisation lands.
+>
+> **Status 2026-10-30:** the USB line is now 0143: EP2 IN bulk MPS 512 and
+> 511-byte log frames (16 B header + up to 495 B text), a 64-GPD TX ring with
+> at most 63 in flight, and a TX-ring reset on rearm. CI `41022192026`
+> matched patchset `f47f4c19...` (139 files) and exec-data `6fa65088...`.
+> Enumeration/config/HS are green; the host-side first-session XACT is
+> **still open** (variable 0-54 frames; EP0 can also XACT and the device may
+> drop). The reference host tool and the tested conditions (AMD USB4 CC and
+> A-to-C cables, WinUSB binding, safe debugging) are in
+> `docs/en/12-usb-host.md` (Chinese: `docs/zh/12-usb-host.md`).
+>
+> **Status 2026-10-29:** the kernel CI now assembles from a content-pinned
+> 82-file baseline (manifest root `829d7598...`) fetched from a private
+> content-addressed mirror; the 0001-0079 baseline is no longer a live upstream
+> dependency. The ramdisk line adds the LK-ramdisk rescue root (`md0`, PID 1
+> in-process, 8/8 rescue `/etc/rc` checks, USB `1209:0002` enumeration at ~35 s); the ramdisk and USB lines
+> are combined on `main` (squashed from `merge-ramdisk-usb-2026-10-29`).
+> `usb-0131b-probe-write` keeps the vendor USB probe; EP2 host-side XACT
+> remains open. Real touch (0085) remains the last UI milestone; no new device
+> image was flashed for this CI change.
+>
+> **Status 2026-10-22:** **real touch works.** The 0085 kernel drives the
+> Goodix GT9916R over bit-bang SPI3, unlocks the lock screen with a real
+> bottom-edge swipe, and dispatches two simultaneous contacts and edge events
+> to the HID layer (kernel IOLog; a user-visible pinch was not separately
+> instrumented). The 0084 image
+> and a CI-built kernel also reach the lock screen and the synthetic swipe to
+> the home screen. **Timings are measured from the Apple logo:** the B+NOP
+> first boot was observed at 22 s to lock screen and 30 s to autoswipe; the
+> historical first boot was ~58 s and the warm reboot ~22 s. Buttons, USB,
+> Wi-Fi, GPU and RTC are still not implemented.
+>
+> **Device regression:** the B+NOP first boot -> A', the CI kernel boot, and
+> the real-touch 0085 boot were run on the author's unit on 2026-10-22. A
+> second unit/clean-room and the from-IPSW root/shim/ADT builders remain open.
+> See [`GUARANTEE.md`](docs/records/GUARANTEE.md).
+</details>
 
 ## Acknowledgements and legal
 
-See [`ACKNOWLEDGEMENTS.md`](ACKNOWLEDGEMENTS.md) and [`LEGAL.md`](LEGAL.md).
+See [`ACKNOWLEDGEMENTS.md`](docs/records/ACKNOWLEDGEMENTS.md) and [`LEGAL.md`](docs/records/LEGAL.md).
 Media capture rules are in [`media/CAPTURE.md`](media/CAPTURE.md).
 
 ## License
@@ -192,6 +274,7 @@ XNU and remain under APSL 2.0. Upstream projects and excluded material are
 listed in [`NOTICE`](NOTICE).
 
 **Upstream note:** `ios-sweet` and `ios-topaz` had no license file at the
-pinned commits. This repository does not vendor their trees; it publishes a
-recipe and only this project's patches. No upstream permission is claimed.
-See [`LEGAL.md`](LEGAL.md).
+pinned commits. This repository does not contain the complete upstream trees;
+it publishes a recipe, this project's patches, and the disclosed 0010/0012
+change in `ci/baseline-changes.patch`. No upstream permission is claimed.
+See [`LEGAL.md`](docs/records/LEGAL.md).

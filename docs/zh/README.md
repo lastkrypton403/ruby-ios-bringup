@@ -5,6 +5,19 @@
 证据优先。每条结论标注 **[实测]**、**[DTS]**、**[推断]** 或 **[历史]**；
 未验证的内容不会写成事实。文档不含个人路径、设备标识或 Apple 二进制。
 
+## 当前线
+
+| 项 | 值 |
+|---|---|
+| 线 | 0195 |
+| `main` / tag | `1e45453` / `v0.6.0` |
+| Patchset | `a9cc0050…`（187 文件） |
+| 内核 | full `45ea1bc3…`、exec-data `6b22fc25…` |
+| 镜像 | `fe009b89…`（`x16-0195-ack.img`；黄金 boot 在 0194 `1808e440…` 验证） |
+| 已知限制 | XactErr `0xC0000011`；511 B 帧封装；连续 clear 风暴可能停主机端口；无 USB host/audio/Wi-Fi/BT/camera/GPU/RTC/sleep；研究性 bring-up |
+
+见 [STATUS](../records/STATUS.md) · [VERIFICATION](../records/VERIFICATION.md) · [GUARANTEE.zh.md](../records/GUARANTEE.zh.md)。
+
 ## 阅读路径
 
 | 时间 | 读什么 | 目标 |
@@ -15,25 +28,28 @@
 
 ## 章节
 
-| 文档 | 内容 |
-|---|---|
-| [`01-architecture`](01-architecture.md) | 启动链与组件地图 |
-| [`02-hardware`](02-hardware.md) | 实测 MT6877 硬件坐标 |
-| [`03-boot-chain`](03-boot-chain.md) | LK、128 MiB 镜像、看门狗/console |
-| [`04-display`](04-display.md) | surface 到 panel、缓存维护 |
-| [`05-userland`](05-userland.md) | launchd/LS/MG 死锁、ICL NOP 反汇编 |
-| [`06-input`](06-input.md) | 真实 Goodix 触摸、SweetHID、边缘位、合成上滑 |
-| [`touch-goodix-9916r`](touch-goodix-9916r.md) | GT9916R 硬件、上电/协议手册、bring-up 记录 |
-| [`07-experiments`](07-experiments.md) | 时间线、失败目录、决策记录 |
-| [`08-recovery`](08-recovery.md) | Android 恢复、TWRP、raw I/O |
-| [`09-reproduce`](09-reproduce.md) | 构建、打包、刷写、验证 |
-| [`10-scripts`](10-scripts.md) | 逐脚本用途与边界 |
-| [`appendix-dualboot`](appendix-dualboot.md) | 可选布局；仅方法说明 |
-| [`glossary`](glossary.md) | 代号、缩写与状态标签 |
-| [`device`](device.md) | 设备情况；不发布基线 hash |
-| [`root-recipe`](root-recipe.md) | root 输入与步骤；不含 root 镜像 |
-| [`reproducibility`](reproducibility.md) | Tier B recipe、防漂移、暂缓测试 |
-| [`保证`](../../GUARANTEE.zh.md) | 成功路径范围、bundle hash、暂缓测试 |
+| 文档 | 内容 | 状态 | 最后验证 |
+|---|---|---|---|
+| [`01-architecture`](01-architecture.md) | 启动链与组件地图 | `[实测]` | 2026-10-22 |
+| [`02-hardware`](02-hardware.md) | 实测 MT6877 硬件坐标 | `[实测]` | 2026-11-06 |
+| [`03-boot-chain`](03-boot-chain.md) | LK、128 MiB 镜像、看门狗/console | `[实测]` | 2026-10-22 |
+| [`04-display`](04-display.md) | surface 到 panel、缓存维护 | `[实测]` | 2026-10-22 |
+| [`05-userland`](05-userland.md) | launchd/LS/MG 死锁、ICL NOP 反汇编 | `[实测]` | 2026-10-22 |
+| [`06-input`](06-input.md) | 真实 Goodix 触摸、原生 EINT14、按键、SweetHID、边缘位、合成上滑 | `[实测]` | 2026-11-06 |
+| [`touch-goodix-9916r`](touch-goodix-9916r.md) | GT9916R 硬件、上电/协议手册、原生 EINT 服务、bring-up 记录 | `[实测]` | 2026-11-06 |
+| [`07-experiments`](07-experiments.md) | 时间线、失败目录、决策记录 | `[实测]` | 2026-11-06 |
+| [`08-recovery`](08-recovery.md) | Android 恢复、TWRP、raw I/O | `[实测]` | 2026-10-22 |
+| [`09-reproduce`](09-reproduce.md) | 构建、打包、刷写、验证 | `[实测]` | 2026-11-06 |
+| [`10-scripts`](10-scripts.md) | 逐脚本用途与边界 | `[实测]` | 2026-11-06 |
+| [`11-ci-baseline`](11-ci-baseline.md) | 内容固定的基线、分支 pin、exec-data 门禁 | `[实测]` | 2026-11-06 |
+| [`12-usb-host`](12-usb-host.md) | USB 上位机通道：测试条件、驱动绑定、安全调试 | `[实测]` | 2026-11-06 |
+| [`13-usb-ep2-golden`](13-usb-ep2-golden.md) | EP2 状态机 0180–0195、黄金 PHY、主机侧边界 | `[实测]` | 2026-11-07 |
+| [`appendix-dualboot`](appendix-dualboot.md) | 可选布局；仅方法说明 | `[推断]` | — |
+| [`glossary`](glossary.md) | 代号、缩写与状态标签 | — | — |
+| [`device`](device.md) | 设备情况；不发布基线 hash | `[实测]` | 2026-10-22 |
+| [`root-recipe`](root-recipe.md) | root 输入与步骤；不含 root 镜像 | `[实测]` | 2026-10-22 |
+| [`reproducibility`](reproducibility.md) | Tier B recipe、防漂移、暂缓测试 | `[实测]` | 2026-11-06 |
+| [`保证`](../records/GUARANTEE.zh.md) | 成功路径范围、bundle hash、暂缓测试 | `[实测]` | 2026-11-06 |
 
 ## 规则
 

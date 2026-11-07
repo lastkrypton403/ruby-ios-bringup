@@ -1,5 +1,12 @@
 # Config
 
+`0140.env` and `0131b.env` record the 2026-10-29 CI pins. `0140` is the ramdisk
+line (patchset `27894e7b...`, 137 files); `0131b` is the USB branch
+(`29449e32...`, 135 files) and keeps its exact boot args in
+`0131b-boot.cmdline`. The kernel baseline is fetched from a private
+content-addressed mirror; the public pin is the manifest root recorded in each
+file. `ALLOW_PUBLIC_UPSTREAM=1` is the external fallback.
+
 `0085.env` and `0085-boot.cmdline` record the state that first provided real
 Goodix touch on 2026-10-22. `0084.env` and `0084-boot.cmdline` are the previous
 milestone (synthetic autoswipe). They are provenance, not universal defaults:
@@ -12,6 +19,34 @@ milestone (synthetic autoswipe). They are provenance, not universal defaults:
 - The 0085 cmdline intentionally omits `sweetautoswipe`, so only real touch
   drives the UI.
 - `sweetfb_hz=30` and `sweetfb_noconsole=1` are display/debug choices.
+
+`0086.env` and `0086-boot.cmdline` are the USB P0 build/test state: the
+89-file 0086 patchset, `rubyusb=1` in the test cmdline, and no booted kernel
+pin yet. `rubyusb=0` (the default when the argument is absent) keeps the probe
+inert.
+
+`0087.env` and `0087-boot.cmdline` are the P2 diagnostic build: the 90-file
+patchset, a 30 s polling EP0 enumeration window, and `ufslogsecs=1` so the
+trace is flushed quickly. It is WIP; no booted reference is pinned.
+
+`0144.env` and `0144-boot.cmdline` are the 2026-11-01 P0 read-only board
+probe/REPL line (patchset `9f7b41cf...`, 141 files, built on `macos-15` with
+Xcode 16.0; CI `41229568807`, kernel exec-data `62a17d48...`):
+`rubyprobe=1` for the I2C pin takeover/WDT emergency writes, `sweetgt=0` so
+the probe owns I2C5, and no `rubypmic` (pwrap/rail writes stay locked).
+
+`0179.env` and `0179-boot.cmdline` are the 2026-11-06 current line (patchset
+`10b1e2e8...`, 175 files; CI `42114854911`, gate `42115985782`, host-checks
+`42115991259`, kernel exec-data `a4fb021e...`, image `d438ba47...`):
+`rubyusb=1`, `rubyprobe=1`, `rubypwrap=1`, `rubkeys=1`, `rubybatt=1`,
+`sweetgt=1`, `rubyeint=1`, `rubyeintb1=1`, `rubykpdirq=1`; no `sweetbattery`.
+Touch uses the native EINT14 oneshot path; battery remains read-only.
+
+`0155.env` and `0155-boot.cmdline` are the historical 2026-11-02 line
+(patchset `da13b6df...`, 151 files; CI `41354317810`, gate `41355922057`,
+kernel exec-data `2e98fd85...`, image `3b44c0e2...`): `rubyusb=1`,
+`rubyprobe=1`, `rubypwrap=1`, `rubkeys=1`, `rubybatt=1`, `sweetgt=1`; no
+`sweetbattery`. Touch and battery share the I2C5 IOLock.
 
 The kernel SHA and image SHA in `0085.env` are from the build that booted.
 A CI rebuild is not promised to be byte-identical; the canonical patchset hash

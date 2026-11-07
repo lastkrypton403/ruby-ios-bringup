@@ -23,6 +23,12 @@
 | 10-21 | ICL NOP | 4 字节 `bl`→`nop` | boot22 锁屏 58 秒 |
 | 10-21 | 合成上滑 | 0084 内核定时器 | boot23 热重启从 Apple logo 起 22 秒，桌面，动画 |
 | 10-22 | 真实触摸 | 0085 Goodix SPI bit-bang、LDO VOUT 1.8/3.3 V | 真实底边上滑解锁、双指 contact 分发、edge |
+| 11-01 | 工具链 | 构建迁到托管 `macos-15` 镜像 + Xcode 16.0；源码不变 | CI 绿；接口编译步骤仍正常生成 |
+| 11-01 | 枚举 | 0145 把 attach 窗口从 4 s 放宽到 12 s，并提高尝试预算 | 主机第一次尝试就完成配置 |
+| 11-01 | 板级探针 | 0144 的只读探针命令走 USB 控制台 | 19 条里 17 条返回板级数据；两条 pwrap 读数仍为空 |
+| 11-02 | P1/P2/P3 线 | 0146a-0155：探针/pwrap、按键/复位、电池、触摸接回；0155 共用 I2C5 锁 | 0155 真机 PASS：触摸、按键、电池 `external=1`；19/19；8/8 I2C5 |
+| 11-03/11-04 | IRQ demux / SPI3 | 0159-0168：EINT demux、deferred 服务、SPI3 触摸；IRQ/waitq 重度 UI panic -> 默认 polling | polling 稳定；IRQ 根因未闭环 |
+| 11-05/11-06 | 原生 IRQ 线 | 0175-0179：RubyGIC + KPD、EINT B1、parent、child oneshot、retry/soft reset | 0179 G1–G6；10 min + 约 5 min 压测；无 panic/STUCK/重激活；G7/G8 取消 |
 
 ## 失败目录
 
@@ -81,6 +87,11 @@ pad-select 和 CS 行为；bit-bang 去掉这些变量并证明了芯片。以�
 VTP 1.8 V；只 enable 会让 AVDD 欠压、芯片沉默。先读旧 VOUT，断电，
 写 1.8 V/3.3 V，再回读。
 
+
+**D11 — 一个会话一次写。** EP2 OUT 通道每个会话只撑得住约二十次写，而内核按行
+解析 OUT 缓冲区，所以整组命令一次性发出。设备 STALL 只会挂起该 handle 的
+EP0 IN 端点：要重开 handle，并读在写位置之前。没有热插拔恢复：端点 halt 后
+只能物理断电重启。
 ## 不要重复
 
 - 没有 `sent=1` 证据，不要怀疑内核通知。
