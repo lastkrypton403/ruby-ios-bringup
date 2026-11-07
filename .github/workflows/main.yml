@@ -1,0 +1,4 @@
+mkdir ~/shimbuild && cd ~/shimbuild
+git init
+cp -R ~/ios-topaz/shim ./shim-topaz
+mkdir -p .github/workflows
